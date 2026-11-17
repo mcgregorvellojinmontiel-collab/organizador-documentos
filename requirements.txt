@@ -1,0 +1,12 @@
+streamlit
+numpy
+pandas
+scikit-learn
+joblib
+Pillow
+opencv-python-headless
+PyMuPDF
+pytesseract
+google-genai
+python-dotenv
+openpyxl>=3.1.0
