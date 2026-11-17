@@ -1,34 +1,52 @@
 
-import os
-import time
+"""Generación de recomendaciones con Gemini."""
 
+import os
+import streamlit as st
 from dotenv import load_dotenv
 from google import genai
-from google.genai import types
 
-BASE = os.path.dirname(os.path.abspath(__file__))
-load_dotenv(os.path.join(BASE, ".env"))
+load_dotenv()
 
-MODELO_LLM = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-
+MODELO_LLM = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 _cliente = None
+
+
+def obtener_configuracion():
+    """Lee las credenciales localmente o desde Streamlit Cloud."""
+
+    api_key = os.getenv("GEMINI_API_KEY")
+
+    if not api_key:
+        try:
+            api_key = st.secrets.get("GEMINI_API_KEY")
+        except Exception:
+            api_key = None
+
+    try:
+        modelo = st.secrets.get("GEMINI_MODEL", MODELO_LLM)
+    except Exception:
+        modelo = MODELO_LLM
+
+    if not api_key:
+        raise RuntimeError(
+            "Falta GEMINI_API_KEY. Configúrala en "
+            "Streamlit Cloud > Settings > Secrets "
+            "o en tu archivo .env local."
+        )
+
+    return api_key, modelo
 
 
 def _cliente_gemini():
     global _cliente
 
-    api_key = os.getenv("GEMINI_API_KEY")
-
-    if not api_key:
-        raise RuntimeError("Falta GEMINI_API_KEY en .env")
+    api_key, modelo = obtener_configuracion()
 
     if _cliente is None:
-        _cliente = genai.Client(
-            api_key=api_key,
-            http_options=types.HttpOptions(timeout=60000)
-        )
+        _cliente = genai.Client(api_key=api_key)
 
-    return _cliente
+    return _cliente, modelo
 
 
 def generar_recomendacion(
@@ -38,74 +56,56 @@ def generar_recomendacion(
     texto_documento="",
     estrategia="detallada"
 ):
+
     estilos = {
         "breve": "Sé conciso, pero supera 200 caracteres.",
-        "detallada": "Explica detalladamente el resultado.",
+        "detallada": "Explica detalladamente el resultado y la organización.",
         "pasos": "Organiza las recomendaciones en pasos numerados."
     }
 
     fragmento = (texto_documento or "")[:3500]
 
     if not fragmento.strip():
-        fragmento = "[No se pudo extraer texto.]"
+        fragmento = "[No se pudo extraer texto del documento.]"
 
     prompt = f"""
-Eres un asistente especializado en organización documental.
+Eres un asistente de organización documental.
+Explica una predicción ya realizada;
+no cambies la categoría ni inventes información.
 
 Archivo: {nombre_archivo}
 Categoría predicha: {categoria}
-Puntuación: {puntuacion}%
+Puntuación del clasificador: {puntuacion}%
 
-Texto extraído:
+Fragmento extraído:
 {fragmento}
 
-Genera una recomendación en español de más de 200 caracteres.
-Explica la clasificación, recomienda una carpeta,
-sugiere cómo organizar el archivo y qué debe verificar
-el usuario.
+Escribe en español una recomendación de más de 200 caracteres
+que explique la categoría, cite señales presentes en el fragmento,
+sugiera carpeta y criterio de nombre/orden, e indique qué debe
+verificar el usuario.
 
-No inventes información ni expongas datos personales.
-Si la puntuación es baja, recomienda revisión manual.
+Si la puntuación es baja o no hay texto, advierte que requiere
+revisión manual.
+
+No expongas ni repitas innecesariamente datos personales,
+bancarios o identificaciones.
 
 Estilo: {estilos.get(estrategia, estilos["detallada"])}
 """
 
-    cliente = _cliente_gemini()
+    cliente, modelo = _cliente_gemini()
 
-    for intento in range(1, 4):
+    respuesta = cliente.models.generate_content(
+        model=modelo,
+        contents=prompt
+    )
 
-        try:
-            print(
-                f"Conectando con Gemini... Intento {intento}/3",
-                flush=True
-            )
+    texto = (respuesta.text or "").strip()
 
-            respuesta = cliente.models.generate_content(
-                model=MODELO_LLM,
-                contents=prompt
-            )
+    if len(texto) < 200:
+        raise ValueError(
+            "Gemini devolvió menos de 200 caracteres."
+        )
 
-            texto = (respuesta.text or "").strip()
-
-            if len(texto) < 200:
-                raise ValueError(
-                    "Gemini generó menos de 200 caracteres."
-                )
-
-            print("Recomendación generada correctamente.", flush=True)
-
-            return texto
-
-        except Exception as error:
-
-            mensaje = str(error)
-
-            if "503" in mensaje or "UNAVAILABLE" in mensaje:
-                if intento < 3:
-                    print("Servidor saturado. Reintentando...", flush=True)
-                    time.sleep(2 * intento)
-                    continue
-
-            raise
-
-    raise RuntimeError("Gemini no respondió después de 3 intentos.")
+    return texto
