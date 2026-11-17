@@ -1,6 +1,6 @@
 .venv/
-venv/
 __pycache__/
+*.pyc
 
 .env
 .env.*
@@ -10,11 +10,9 @@ entrenamiento/
 documentos/
 resultados/
 
-*.db
+feedback.db
 *.sqlite
 *.sqlite3
 
 *.log
 .DS_Store
-
-.streamlit/secrets.toml
